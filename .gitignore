@@ -6,4 +6,4 @@ playwright_profile
 .env.local
 .env.development
 .env.production
-
+firebase-service-account.json

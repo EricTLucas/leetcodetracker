@@ -19,7 +19,7 @@ async function loadRecent() {
 
     const snapshot = await db
         .collection("leetcode")
-        .doc("problems")
+        .doc("submissions")
         .collection("items")
         .orderBy("timestamp", "desc")
         .limit(20)

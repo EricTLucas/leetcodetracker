@@ -3,6 +3,7 @@ import re
 import requests
 import time
 from dotenv import load_dotenv
+from db import toTitle
 
 # Load .env from project root
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -87,7 +88,7 @@ def fetch_all_submissions():
             "offset": offset,
             "limit": limit
         })
-
+        
         page = data["submissionList"]
         subs = page["submissions"]
 
@@ -180,10 +181,12 @@ def fetch_rest_details_retry(slug, retries=5, delay=1.5):
     return None
 
 
+
+
 # -----------------------------
 # Unified extractor
 # -----------------------------
-def extract_submission(slug, recent_entry):
+def extract_submission(slug, submission_id, recent_entry):
     # Skip non-accepted submissions
     
     if recent_entry["statusDisplay"] != "Accepted":
@@ -204,6 +207,7 @@ def extract_submission(slug, recent_entry):
                 "timestamp": accepted.get("timestamp"),
                 "runtime": accepted.get("runtime"),
                 "memory": accepted.get("memory"),
+                "title": toTitle(slug),
                 "code": None,
                 "runtime_percentile": None,
                 "memory_percentile": None,

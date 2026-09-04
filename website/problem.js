@@ -14,7 +14,7 @@ async function loadProblem() {
 
     const docRef = db
         .collection("leetcode")
-        .doc("problems")
+        .doc("submissions")
         .collection("items")
         .doc(slug);
 
