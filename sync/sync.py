@@ -1,5 +1,5 @@
 from client import fetch_recent, extract_submission, fetch_all_submissions, compute_unique_solved
-from db import init_db, get_meta, set_meta, get_known_slugs, save_problem, save_submission, push_recent_to_firebase, push_stats_to_firebase
+from db import init_db, get_meta, set_meta, get_known_slugs, save_problem, save_submission, push_recent_to_firebase, push_stats_to_firebase, get_per_score
 from scraper import scrape_code_and_percentiles
 from utils import compute_solved_last_7_days
 
@@ -94,13 +94,16 @@ def sync():
         if rest_data is None:
             continue
 
-        submission_id = rest_data["id"]
-
         full = {
             **rest_data,
-            **scrape_code_and_percentiles(submission_id)
+            **scrape_code_and_percentiles(entry["id"])
         }
-
+        old_per = get_per_score(slug)
+        if old_per is not None:
+            new_per = int(float(full.get("runtime_percentile").rstrip("%"))) + int(float(full.get("memory_percentile").rstrip("%")))
+            if new_per < old_per:
+                continue
+            
         
         save_submission(full)
         print(f"Saved {slug}.")

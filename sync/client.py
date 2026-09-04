@@ -205,13 +205,13 @@ def extract_submission(slug, submission_id, recent_entry):
                 "title_slug": slug,
                 "lang": accepted.get("lang"),
                 "timestamp": accepted.get("timestamp"),
-                "runtime": accepted.get("runtime"),
-                "memory": accepted.get("memory"),
                 "title": toTitle(slug),
+                "status": "Accepted",
                 "code": None,
+                "runtime": None,
+                "memory": None,
                 "runtime_percentile": None,
-                "memory_percentile": None,
-                "status": "Accepted"
+                "memory_percentile": None
             }
 
     # REST failed → fallback to Playwright

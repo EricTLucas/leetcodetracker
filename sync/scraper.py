@@ -29,8 +29,9 @@ def scrape_code_and_percentiles(submission_id):
             document.querySelectorAll('span[class*="text-lg"][class*="font-semibold"][class*="text-sd-foreground"]')
         ).map(el => el.innerText.trim());
         """)
-
+        runtime = spans[0] if len(spans) > 0 else None
         runtime_pct = spans[1] if len(spans) > 1 else None
+        memory = spans[2] if len(spans) > 2 else None
         memory_pct = spans[3] if len(spans) > 3 else None
 
         # Extract code from Prism <code> block
@@ -42,7 +43,9 @@ def scrape_code_and_percentiles(submission_id):
         return {
             "id": submission_id,
             "code": code,
+            "runtime": str(runtime) + "ms",
             "runtime_percentile": runtime_pct,
+            "memory": str(memory) + "MB",
             "memory_percentile": memory_pct
         }
 

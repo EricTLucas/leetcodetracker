@@ -34,7 +34,7 @@ async function loadProblem() {
     const meta = document.getElementById("meta");
     meta.innerHTML = `
         <div>Submitted: ${new Date(data.timestamp * 1000).toLocaleString()}</div>
-        <div>Status: ${data.statusDisplay}</div>
+        <div>Status: ${data.status}</div>
         <div>Language: ${data.lang}</div>
     `;
 
