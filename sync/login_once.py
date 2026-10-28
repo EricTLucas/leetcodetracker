@@ -1,47 +1,16 @@
+"""Optional login helper; normal sync also prompts when sign-in expires."""
 from playwright.sync_api import sync_playwright
-import os
+from client import LeetCodeClient
+from browser import launch_browser, close_browser
+from sync import USERNAME
 
-PROFILE_DIR = os.path.join(os.getcwd(), "playwright_profile")
-
-with sync_playwright() as p:
-    browser = p.chromium.launch_persistent_context(
-        PROFILE_DIR,
-        headless=False,
-
-        # These flags make Cloudflare treat the browser as real Chrome
-        args=[
-            "--disable-blink-features=AutomationControlled",
-            "--disable-infobars",
-            "--disable-web-security",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--start-maximized",
-        ],
-
-        # Pretend to be a real Chrome browser
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/127.0.0.1 Safari/537.36"
-        ),
-
-        # Make Playwright expose real browser APIs
-        viewport={"width": 1280, "height": 800},
-        java_script_enabled=True,
-        bypass_csp=True,
-    )
-
-    page = browser.new_page()
-
-    # Cloudflare sometimes needs a small delay before navigation
-    page.wait_for_timeout(500)
-
-    print("Opening LeetCode login page...")
-    page.goto("https://leetcode.com/accounts/login/", wait_until="domcontentloaded")
-    page.evaluate("""
-        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-    """)
-
-    print("Browser launched. Please log in manually.")
-    print("After logging in, close the browser window.")
-    input("Press Enter AFTER closing the browser...")
-
+if __name__ == "__main__":
+    with sync_playwright() as p:
+        context = launch_browser(p)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto("https://leetcode.com/", wait_until="domcontentloaded")
+            LeetCodeClient(context).ensure_login(page, USERNAME)
+            print("Login saved. You can now run sync.cmd.")
+        finally:
+            close_browser(context)

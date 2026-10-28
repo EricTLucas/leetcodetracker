@@ -7,3 +7,5 @@ playwright_profile
 .env.development
 .env.production
 firebase-service-account.json
+
+.venv/

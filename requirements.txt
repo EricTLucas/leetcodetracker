@@ -1,6 +1,5 @@
-sqlite3
-bs4
-playwright
+playwright>=1.48,<2
+firebase-admin>=6.5,<8
+fastapi
 uvicorn
-firebase-admin
-sqlite3
+python-dotenv

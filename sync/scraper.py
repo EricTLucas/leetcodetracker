@@ -1,69 +1,55 @@
-from playwright.sync_api import sync_playwright
 import re
-import os
 
-PROFILE_DIR = os.path.join(os.getcwd(), "sync/playwright_profile")
 
-def scrape_code_and_percentiles(submission_id):
-    url = f"https://leetcode.com/submissions/detail/{submission_id}/"
+def scrape_code_and_percentiles(page, submission_id):
+    page.goto(f"https://leetcode.com/submissions/detail/{submission_id}/", wait_until="domcontentloaded")
+    # Wait for percentiles (hydrated DOM)
+    page.wait_for_selector(
+        'span[class*="text-lg"][class*="font-semibold"][class*="text-sd-foreground"]',
+        timeout=60000
+    )
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch_persistent_context(
-            PROFILE_DIR,
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"]
-        )
+    page.wait_for_function("""() => {
+        const values = Array.from(document.querySelectorAll(
+            'span[class*="text-lg"][class*="font-semibold"][class*="text-sd-foreground"]'
+        ));
+        return values.length >= 4 && values.slice(0, 4).every(el => el.innerText.trim());
+    }""", timeout=60000)
 
-        page = browser.new_page()
-        page.goto(url)
+    # Extract percentiles
+    spans = page.evaluate("""
+    () => Array.from(
+        document.querySelectorAll('span[class*="text-lg"][class*="font-semibold"][class*="text-sd-foreground"]')
+    ).map(el => el.innerText.trim());
+    """)
+    runtime = spans[0] if len(spans) > 0 else None
+    runtime_pct = spans[1] if len(spans) > 1 else None
+    memory = spans[2] if len(spans) > 2 else None
+    memory_pct = spans[3] if len(spans) > 3 else None
 
-        # Wait for percentiles (hydrated DOM)
-        page.wait_for_selector(
-            'span[class*="text-lg"][class*="font-semibold"][class*="text-sd-foreground"]',
-            timeout=60000
-        )
+    # Extract code from Prism <code> block
+    page.wait_for_selector("code[class^='language-']", timeout=60000)
+    code_raw = page.locator("code[class^='language-']").inner_text()
+    code = normalize_code(code_raw)
+    if not all((runtime, runtime_pct, memory, memory_pct, code)):
+        raise RuntimeError("Submission page is missing code or performance details")
+    for value in (runtime_pct, memory_pct):
+        if not re.fullmatch(r"\d+(?:\.\d+)?%?", value.strip()) or not 0 <= float(value.rstrip("%")) <= 100:
+            raise RuntimeError("Submission percentiles could not be read")
 
-        # Extract percentiles
-        spans = page.evaluate("""
-        () => Array.from(
-            document.querySelectorAll('span[class*="text-lg"][class*="font-semibold"][class*="text-sd-foreground"]')
-        ).map(el => el.innerText.trim());
-        """)
-        runtime = spans[0] if len(spans) > 0 else None
-        runtime_pct = spans[1] if len(spans) > 1 else None
-        memory = spans[2] if len(spans) > 2 else None
-        memory_pct = spans[3] if len(spans) > 3 else None
+    return {
+        "id": submission_id,
+        "code": code,
+        "runtime": with_unit(runtime, "ms"),
+        "runtime_percentile": runtime_pct,
+        "memory": with_unit(memory, "MB"),
+        "memory_percentile": memory_pct
+    }
+def with_unit(value, unit):
+    value = value.strip()
+    return value if value.lower().endswith(unit.lower()) else value + unit
 
-        # Extract code from Prism <code> block
-        page.wait_for_selector("code[class^='language-']", timeout=60000)
-        code_raw = page.locator("code[class^='language-']").inner_text()
-        code = normalize_code(code_raw)
-        browser.close()
-
-        return {
-            "id": submission_id,
-            "code": code,
-            "runtime": str(runtime) + "ms",
-            "runtime_percentile": runtime_pct,
-            "memory": str(memory) + "MB",
-            "memory_percentile": memory_pct
-        }
 
 def normalize_code(raw):
-    if raw is None:
-        return None
-
-    # Convert literal \n into actual newlines
-    code = raw.replace("\\n", "\n")
-
-    # Remove leading line numbers like "1", "2", "10", "57"
-    code = re.sub(r"^\d+", "", code, flags=re.MULTILINE)
-
-    # Strip accidental leading/trailing whitespace
-    code = code.strip()
-
-    return code
-
-
-
-
+    # Prism text is already decoded source. Preserve literal escapes and digits.
+    return raw.strip() if raw is not None else None

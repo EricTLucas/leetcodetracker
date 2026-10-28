@@ -1,132 +1,79 @@
-from client import fetch_recent, extract_submission, fetch_all_submissions, compute_unique_solved
-from db import init_db, get_meta, set_meta, get_known_slugs, save_problem, save_submission, push_recent_to_firebase, push_stats_to_firebase, get_per_score
+"""Manual sync: python sync/sync.py (or run sync.cmd)."""
+import sys
+from client import LeetCodeClient, compute_unique_solved
 from scraper import scrape_code_and_percentiles
+from browser import launch_browser, close_browser
 from utils import compute_solved_last_7_days
 
 USERNAME = "EricLucas"
 
 
-def update_solved_week(all_subs):
-    solved_count, _ = compute_solved_last_7_days(all_subs)
-    set_meta("solved_week", solved_count)
-    print(f"Solved last 7 days: {solved_count}")
-    return solved_count
+def pending_submissions(all_subs, saved):
+    # One complete, latest accepted submission per problem, including older gaps.
+    latest = {}
+    for entry in sorted(all_subs, key=lambda s: int(s["timestamp"]), reverse=True):
+        if entry["statusDisplay"] == "Accepted":
+            latest.setdefault(entry["titleSlug"], entry)
+    for slug, entry in latest.items():
+        old = saved.get(slug, {})
+        if str(old.get("id")) != str(entry["id"]) or any(
+            old.get(field) in (None, "") for field in
+            ("code", "runtime", "memory", "runtime_percentile", "memory_percentile")
+        ):
+            yield entry
 
 
-# -----------------------------
-# MAIN SYNC
-# -----------------------------
 def sync():
-    print("Initializing DB...")
-    init_db()
+    from playwright.sync_api import sync_playwright
+    import db
 
-    full_sync_done = get_meta("full_sync_done") == "true"
-
-    # FULL SYNC: fetch all submissions and compute unique problems solved only first time
-    if not full_sync_done:
-        print("Running full submission sync...")
-
-        all_subs = fetch_all_submissions()
-        unique_slugs = compute_unique_solved(all_subs)
-
-        for slug in unique_slugs:
-            save_problem(slug, "true")
-
-        total_unique = len(unique_slugs)
-        set_meta("total_unique_solved", total_unique)
-        set_meta("full_sync_done", "true")
-        update_solved_week(all_subs)
-        print(f"Full sync complete. Total unique solved: {total_unique}")
-    else:
-        print("Full sync already done. Using recent submissions...")
-
-    # -----------------------------------
-    # RECENT SUBMISSIONS
-    # -----------------------------------
-    print("Fetching recent submissions...")
-    recent = fetch_recent(USERNAME)
-    print(f"Found {len(recent)} recent submissions.")
-
-    known_slugs = get_known_slugs()
-    current_total = int(get_meta("total_unique_solved") or 0)
-
-    # -----------------------------------
-    # Identify NEW unique solves
-    # -----------------------------------
-    new_slugs = {
-        entry["titleSlug"]
-        for entry in recent
-        if entry.get("statusDisplay") == "Accepted"
-    } - known_slugs
-
-    if not full_sync_done:
-        new_slugs = {
-            entry["titleSlug"]
-            for entry in recent 
-            if entry.get("statusDisplay") == "Accepted"
-            }
-
-    if new_slugs:
-        if full_sync_done:
-            current_total += len(new_slugs)
-            set_meta("total_unique_solved", current_total)
-
-        for slug in new_slugs:
-            save_problem(slug, "true")
-
-        print(f"New unique problems solved: {new_slugs}")
-        print(f"Updated total unique problems solved: {current_total}")
-    else:
-        print("No new unique problems solved.")
-
-    for entry in recent:
-        slug = entry["titleSlug"]
-
-        
-
-        if slug not in new_slugs:
-            print(f"Skipping {slug}, already saved.")
-            continue
-
-        print(f"Fetching details for NEW slug {slug}...")
-        
-        rest_data = extract_submission(slug, entry["id"], entry)
-        if rest_data is None:
-            continue
-
-        full = {
-            **rest_data,
-            **scrape_code_and_percentiles(entry["id"])
-        }
-        old_per = get_per_score(slug)
-        if old_per is not None:
-            new_per = int(float(full.get("runtime_percentile").rstrip("%"))) + int(float(full.get("memory_percentile").rstrip("%")))
-            if new_per < old_per:
-                continue
-            
-        
-        save_submission(full)
-        print(f"Saved {slug}.")
-
-
-    # -----------------------------------
-    # NEW: recompute solved this week
-    # -----------------------------------
-    all_subs = fetch_all_submissions()
-    solved_week = update_solved_week(all_subs)
-
-    # -----------------------------------
-    # NEW: push everything to Firebase
-    # -----------------------------------
-    push_stats_to_firebase(current_total, solved_week)
-    push_recent_to_firebase(recent)
-
-    print("Firebase sync complete.")
-    print("Sync complete.")
-
-
-    print("Sync complete.")
+    with sync_playwright() as p:
+        context = launch_browser(p)
+        try:
+            page = context.pages[0] if context.pages else context.new_page()
+            page.goto("https://leetcode.com/", wait_until="domcontentloaded")
+            client = LeetCodeClient(context)
+            client.ensure_login(page, USERNAME)
+            print("Fetching complete submission history...")
+            all_subs = client.fetch_all_submissions()
+            unique_slugs = compute_unique_solved(all_subs)
+            solved_week, _ = compute_solved_last_7_days(all_subs)
+            db.init_db()
+            saved = db.get_saved_submissions()
+            failures = []
+            for entry in pending_submissions(all_subs, saved):
+                slug = entry["titleSlug"]
+                print(f"Fetching {slug}...")
+                try:
+                    details = scrape_code_and_percentiles(page, entry["id"])
+                    if any(details.get(key) in (None, "") for key in
+                           ("code", "runtime", "memory", "runtime_percentile", "memory_percentile")):
+                        raise RuntimeError("Incomplete submission details")
+                    db.save_submission({
+                        **details,
+                        "title_slug": slug,
+                        "title": entry.get("title") or db.toTitle(slug),
+                        "lang": entry["lang"],
+                        "timestamp": int(entry["timestamp"]),
+                        "status": "Accepted",
+                    })
+                    db.save_problem(slug, "true")
+                except Exception as exc:
+                    failures.append(slug)
+                    print(f"Could not save {slug}: {exc}")
+            if failures:
+                raise RuntimeError(f"{len(failures)} submission(s) failed. Saved progress is retained; rerun to retry. Sync totals were not published.")
+            recent = sorted(all_subs, key=lambda s: int(s["timestamp"]), reverse=True)[:20]
+            db.push_recent_to_firebase(recent)
+            db.push_stats_to_firebase(len(unique_slugs), solved_week)
+            print(f"Firebase sync complete: {len(unique_slugs)} solved, {solved_week} in the last 7 days.")
+        finally:
+            close_browser(context)
 
 
 if __name__ == "__main__":
-    sync()
+    try:
+        sync()
+    except (Exception, KeyboardInterrupt) as exc:
+        print(f"Sync did not complete: {exc}", file=sys.stderr)
+        sys.exit(1)
